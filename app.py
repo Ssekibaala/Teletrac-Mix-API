@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 import logging
@@ -6,13 +7,21 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
-# Replace these with your actual credentials
-CLIENT_ID = 'teletrac.services.integrate'
-CLIENT_SECRET = '84snk3xtPCDNPNQX'
-USERNAME = 'brian.s@teletracfleets.com'
-PASSWORD = 'Gloriamaria123.'
+# Credentials come from environment variables (Azure App Settings).
+# MIX_* names are preferred: on Windows, USERNAME is already set by the OS.
+def _required_env(*names):
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    raise RuntimeError('Missing required environment variable: ' + ' or '.join(names))
+
+CLIENT_ID = _required_env('MIX_CLIENT_ID', 'CLIENT_ID')
+CLIENT_SECRET = _required_env('MIX_CLIENT_SECRET', 'CLIENT_SECRET')
+USERNAME = _required_env('MIX_USERNAME', 'USERNAME')
+PASSWORD = _required_env('MIX_PASSWORD', 'PASSWORD')
 SCOPE = 'offline_access MiX.Integrate'
 TOKEN_URL = 'https://identity.za.mixtelematics.com/core/connect/token'
 
@@ -374,5 +383,12 @@ def get_trips_since():
 
     return jsonify(all_trips_since)
 
+# Health check endpoint for Azure
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "healthy", "app": "Mix Integrate API"}), 200
+
+
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)
