@@ -1,7 +1,11 @@
-# Docs for the Azure Web Apps Deploy action: https://github.com/Azure/webapps-deploy
-# More GitHub Actions for Azure: https://github.com/Azure/actions
-# More info on Python, GitHub Actions, and Azure App Service: https://aka.ms/python-webapps-actions
-
+# Deploys app.py to the Azure Web App 'mixflaskwebapp'.
+#
+# Azure installs requirements.txt server-side (SCM_DO_BUILD_DURING_DEPLOYMENT=true
+# is set on the app), so this workflow ships sources only and does not build.
+#
+# Auth is OIDC against a user-assigned managed identity. The three secrets below
+# are identifiers, not credentials -- the trust comes from the identity's
+# federated credential, which is pinned to this repo and the main branch.
 name: Build and deploy Python app to Azure Web App - mixflaskwebapp
 
 on:
@@ -14,36 +18,44 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read #This is required for actions/checkout
-
+      contents: read
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python version
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
-      - name: Create and start virtual environment
-        run: |
-          python -m venv venv
-          source venv/bin/activate
-      
       - name: Install dependencies
-        run: pip install -r requirements.txt
-        
-      # Optional: Add step to run tests here (PyTest, Django test suites, etc.)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Zip artifact for deployment
-        run: zip release.zip ./* -r
+      - name: Health smoke test
+        env:
+          MIX_CLIENT_ID: ci-placeholder
+          MIX_CLIENT_SECRET: ci-placeholder
+          MIX_USERNAME: ci-placeholder
+          MIX_PASSWORD: ci-placeholder
+        run: |
+          python -c "
+          import app
+          r = app.app.test_client().get('/health')
+          assert r.status_code == 200, r.status_code
+          print('health ok:', r.get_json())
+          "
 
-      - name: Upload artifact for deployment jobs
+      - name: Package tracked sources
+        # git archive ships exactly what is committed: no venv, no __pycache__,
+        # no stray local files. 'zip ./* -r' used to sweep all of that in.
+        run: git archive --format=zip -o release.zip HEAD
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-app
-          path: |
-            release.zip
-            !venv/
+          path: release.zip
 
   deploy:
     runs-on: ubuntu-latest
@@ -52,8 +64,8 @@ jobs:
       name: 'Production'
       url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
     permissions:
-      id-token: write #This is required for requesting the JWT
-      contents: read #This is required for actions/checkout
+      id-token: write
+      contents: read
 
     steps:
       - name: Download artifact from build job
@@ -62,9 +74,8 @@ jobs:
           name: python-app
 
       - name: Unzip artifact for deployment
-        run: unzip release.zip
+        run: unzip -o release.zip && rm release.zip
 
-      
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -78,4 +89,14 @@ jobs:
         with:
           app-name: 'mixflaskwebapp'
           slot-name: 'Production'
-          
+
+      - name: Verify /health
+        run: |
+          for i in 1 2 3 4 5 6 7 8; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' https://mixflaskwebapp.azurewebsites.net/health || true)
+            echo "attempt $i: $code"
+            if [ "$code" = "200" ]; then curl -s https://mixflaskwebapp.azurewebsites.net/health; exit 0; fi
+            sleep 15
+          done
+          echo "::error::/health did not return 200 after deploy"
+          exit 1
