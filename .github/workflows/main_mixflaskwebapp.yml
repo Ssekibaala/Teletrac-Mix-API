@@ -60,9 +60,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: build
-    environment:
-      name: 'Production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+    # No 'environment:' here on purpose. Declaring one changes the OIDC token
+    # subject from repo:OWNER/REPO:ref:refs/heads/main to
+    # repo:OWNER/REPO:environment:NAME, which no longer matches the federated
+    # credential on mixflaskwebapp-gh-id. To reinstate the environment, add a
+    # second federated credential whose subject is the environment form.
     permissions:
       id-token: write
       contents: read
